@@ -16,9 +16,6 @@ public class InfiCam {
 	private native static long nativeNew(InfiCam self);
 	private native static void nativeDelete(long ptr);
 
-	public static native void nativeSetDumpPath(String path);
-
-
 	public InfiCam() {
 		if ((instance = nativeNew(this)) == 0)
 			throw new OutOfMemoryError();

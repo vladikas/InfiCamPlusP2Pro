@@ -7,15 +7,6 @@
 
 #define FRAMEINFO_TYPE "be/ntmn/libinficam/InfiCam$FrameInfo"
 
-#include <string>
-#include "libuvc/libuvc.h"
-
-std::string g_dump_dir;
-
-extern "C" void uvc_set_dump_dir(const char* path);
-
-
-
 JavaVM *javaVM = NULL;
 
 extern "C" JNICALL jint JNI_OnLoad(JavaVM *vm, void *reserved) {
@@ -158,15 +149,6 @@ static void *jthread_run(void *a) {
 }
 
 extern "C" {
-	
-// ======== dump path support ========
-JNIEXPORT void JNICALL
-Java_be_ntmn_libinficam_InfiCam_nativeSetDumpPath(JNIEnv *env, jclass, jstring jpath){
-    const char *p = env->GetStringUTFChars(jpath, 0);
-    g_dump_dir = p;
-	uvc_set_dump_dir(p);
-    env->ReleaseStringUTFChars(jpath, p);
-}
 
 JNIEXPORT jlong Java_be_ntmn_libinficam_InfiCam_nativeNew(JNIEnv *env, jclass cls, jobject self) {
 	InfiCamJNI *icj = new InfiCamJNI(env, self);

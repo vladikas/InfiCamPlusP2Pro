@@ -45,9 +45,6 @@ import java.util.concurrent.locks.ReentrantLock;
 
 import be.ntmn.libinficam.InfiCam;
 
-import java.io.File;
-import android.util.Log;
-
 public class MainActivity extends BaseActivity {
 	/* These are public for Settings things to access them. */
 	public final InfiCam infiCam = new InfiCam();
@@ -557,15 +554,6 @@ public class MainActivity extends BaseActivity {
 		});
 
 		setContentView(R.layout.activity_main);
-		
-		File dir = getExternalFilesDir(null); 
-		if (dir != null) {
-			String dumpDir = dir.getAbsolutePath();
-			InfiCam.nativeSetDumpPath(dumpDir);
-			// Log.e("MainActivity", "Dump dir: " + dumpDir);
-		}
-		
-		
 		cameraView = findViewById(R.id.cameraView);
 		messageView = findViewById(R.id.message);
 		surfaceMuxer = new SurfaceMuxer(this);

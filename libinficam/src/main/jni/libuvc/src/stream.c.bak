@@ -40,33 +40,6 @@
 #include "libuvc/libuvc_internal.h"
 #include "errno.h"
 
-#include <android/log.h>
-#include <string.h>
-#include <stdio.h>
-
-#define LOG_TAG "UVC"
-#define LOGV(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
-#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
-
-// буфер и глобальный указатель для пути дампа
-static char g_dump_dir_buf[512] = {0};
-const char* g_dump_dir_c = NULL;
-
-// setter, вызываемый из JNI
-void uvc_set_dump_dir(const char* path) {
-    if (!path || !path[0]) {
-        g_dump_dir_buf[0] = '\0';
-        g_dump_dir_c = NULL;
-        return;
-    }
-
-    strncpy(g_dump_dir_buf, path, sizeof(g_dump_dir_buf) - 1);
-    g_dump_dir_buf[sizeof(g_dump_dir_buf) - 1] = '\0';
-
-    g_dump_dir_c = g_dump_dir_buf;
-}
-
-
 #ifdef _MSC_VER
 
 #define DELTA_EPOCH_IN_MICROSECS  116444736000000000Ui64
@@ -732,31 +705,6 @@ void _uvc_process_payload(uvc_stream_handle_t *strmh, uint8_t *payload, size_t p
   /* ignore empty payload transfers */
   if (payload_len == 0)
     return;
-
-	// ====== RAW ISO PACKET DUMP ======
-	if(1){
-		static int iso_id = 0;
-		if (iso_id < 20000 && g_dump_dir_c && g_dump_dir_c[0] != '\0') {
-
-			char filename[256];
-			snprintf(filename, sizeof(filename),
-					 "%s/stream_%04d.bin", g_dump_dir_c, iso_id);
-
-			FILE *f = fopen(filename, "wb");
-			if (f) {
-				fwrite(payload, 1, payload_len, f);
-				fclose(f);
-				LOGV("Dumped ISO packet in stream.c to %s (payload_len=%zu)", filename, payload_len);
-			} else {
-				LOGE("Failed to open %s for write", filename);
-			}
-
-			iso_id++;
-		}
-	}
-
-
-
 
   /* Certain iSight cameras have strange behavior: They send header
    * information in a packet with no image data, and then the following

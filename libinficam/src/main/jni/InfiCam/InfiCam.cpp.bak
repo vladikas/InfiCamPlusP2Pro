@@ -7,43 +7,15 @@
 #include <cstdlib> /* NULL */
 #include <cstring> /* memcpy() */
 #include <cmath> /* isnan() */
-
 #include <android/log.h>
-#include <stdio.h>
 
-#define LOG_TAG "UVC"
-#define LOGV(...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
+#define LOG_TAG "NativeCode"
 #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
-extern std::string g_dump_dir;
 
 void InfiCam::uvc_callback(uvc_frame_t *frame, void *user_ptr) {
-	// ====== ДАМП СЫРОГО ISO-ПАКЕТА (то, что приходит из USB) ======
-	if(false){
-		uint8_t *src = (uint8_t*)frame->data;
-        size_t   len = frame->data_bytes;
-		
-		static int iso_id = 0;
-		if (iso_id < 2000 && !g_dump_dir.empty()) {
-
-			char filename[256];
-			snprintf(filename, sizeof(filename),
-					 "%s/InfiCam.cpp_%03d.bin", g_dump_dir.c_str(), iso_id);
-
-			FILE *f = fopen(filename, "wb");
-			if (f) {
-				fwrite(src, 1, len, f);
-				fclose(f);
-				LOGV("Dumped ISO packet i InfiCam.cpp to %s (len=%zu)", filename, len);
-				iso_id++;
-			} else {
-				LOGE("Failed to open %s for write", filename);
-			}
-		}
-	}	
-
-
     // This function gets called every time a new frame is ready
 	InfiCam *p = (InfiCam *) user_ptr;
 	if (frame->data_bytes < p->dev.width * p->dev.height * 2)

@@ -10,17 +10,6 @@ extern "C" {
 #include <sys/time.h>
 #include <libuvc/libuvc_config.h>
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-void uvc_set_dump_dir(const char* path);
-
-#ifdef __cplusplus
-}
-#endif
-
-
 struct libusb_context;
 struct libusb_device_handle;
 
@@ -818,4 +807,3 @@ uvc_error_t uvc_mjpeg2gray(uvc_frame_t *in, uvc_frame_t *out);
 #endif
 
 #endif // !def(LIBUVC_H)
-
