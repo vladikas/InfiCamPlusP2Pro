@@ -350,6 +350,9 @@ static uvc_error_t uvc_open_internal(
   internal_devh->dev = dev;
   internal_devh->usb_devh = usb_devh;
 
+  internal_devh->is_infiray = 0;
+
+
   ret = uvc_get_device_info(internal_devh, &(internal_devh->info));
 
   if (ret != UVC_SUCCESS)
@@ -362,6 +365,27 @@ static uvc_error_t uvc_open_internal(
 
   libusb_get_device_descriptor(dev->usb_dev, &desc);
   internal_devh->is_isight = (desc.idVendor == 0x05ac && desc.idProduct == 0x8501);
+
+  /* Detect Infiray T2S+ */
+  internal_devh->is_infiray = 0;
+  
+  if (desc.idVendor == 0x1514 && desc.idProduct == 0x0001) {
+      internal_devh->is_infiray = 1;
+      UVC_DEBUG("Infiray T2S+ detected by VID/PID");
+  }
+
+  /* Optional heuristic */
+  if (!internal_devh->is_infiray &&
+      internal_devh->info &&
+      internal_devh->info->stream_ifs &&
+      internal_devh->info->stream_ifs->bEndpointAddress == 0x81 &&
+      internal_devh->info->ctrl_if.bEndpointAddress == 0) {
+  
+      internal_devh->is_infiray = 1;
+      UVC_DEBUG("Infiray T2S+ detected by endpoint signature");
+  }
+
+
 
   if (internal_devh->info->ctrl_if.bEndpointAddress) {
     internal_devh->status_xfer = libusb_alloc_transfer(0);

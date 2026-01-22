@@ -290,8 +290,6 @@ struct uvc_device_handle {
   uvc_stream_handle_t *streams;
   /** Whether the camera is an iSight that sends one header per frame */
   uint8_t is_isight;
-  /** Whether the camera is Infiray T2S+ with vendor header & RAW16 */ 
-  uint8_t is_infiray; 
   uint32_t claimed;
 };
 

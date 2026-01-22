@@ -812,10 +812,7 @@ void _uvc_process_payload(uvc_stream_handle_t *strmh, uint8_t *payload, size_t p
       data_len = payload_len - header_len;
   }
 
-  if (strmh->devh->is_infiray) {
-  // для Infiray вообще не трогаем UVC-заголовок
-  header_info = 0; 
-  } else  if (header_len < 2) {
+  if (header_len < 2) {
     header_info = 0;
   } else {
     /** @todo we should be checking the end-of-header bit */
@@ -858,7 +855,6 @@ void _uvc_process_payload(uvc_stream_handle_t *strmh, uint8_t *payload, size_t p
     }
   }
 
-/*это ниже - нужно сотавить?*/
   if (data_len > 0) {
     if (strmh->got_bytes + data_len > strmh->cur_ctrl.dwMaxVideoFrameSize)
       data_len = strmh->cur_ctrl.dwMaxVideoFrameSize - strmh->got_bytes; /* Avoid overflow. */
