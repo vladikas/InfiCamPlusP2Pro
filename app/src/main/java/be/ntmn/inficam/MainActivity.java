@@ -171,7 +171,7 @@ public class MainActivity extends BaseActivity {
 					(dev.getVendorId() != 0x1514 && dev.getVendorId() != 0x4B4 && dev.getVendorId() != 0x3474 && dev.getVendorId() != 0xBDA))
 				return;
 
-			raw_cam = (dev.getVendorId() == 0x4B4) || (dev.getVendorId() == 0x3474);	// For T2S+ A2 raw sensor
+			raw_cam = (dev.getVendorId() == 0x4B4) || (dev.getVendorId() == 0x3474) || (dev.getVendorId() == 0x1514);	// For T2S+ A2 raw sensor
 
             p2Pro = (dev.getVendorId() == 0xBDA); // flag for P2 Pro
 

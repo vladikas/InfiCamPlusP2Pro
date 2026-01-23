@@ -10,6 +10,15 @@
 #include <string>
 #include "libuvc/libuvc.h"
 
+#include <android/log.h>
+#include <stdio.h>
+
+#define LOG_TAG "UVC"
+#define LOGV(...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
+#define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
+#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
+
+
 std::string g_dump_dir;
 
 extern "C" void uvc_set_dump_dir(const char* path);
@@ -373,6 +382,7 @@ JNIEXPORT void Java_be_ntmn_libinficam_InfiCam_setRawSensor(JNIEnv *env, jobject
         cam->set_raw_sensor(raw);
         cam->infi.raw_sensor = raw;
     }
+LOGD("JNI setRawSensor called, raw=%d", raw);
 }
 
 JNIEXPORT void Java_be_ntmn_libinficam_InfiCam_setP2Pro(JNIEnv *env, jobject self, jboolean p2_pro) {

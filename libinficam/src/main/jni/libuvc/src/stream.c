@@ -43,6 +43,7 @@
 #include <android/log.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdbool.h>
 
 #define LOG_TAG "UVC"
 #define LOGV(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
@@ -719,9 +720,9 @@ void _uvc_swap_buffers(uvc_stream_handle_t *strmh) {
  * @param payload_len Length of the payload transfer
  */
 void _uvc_process_payload(uvc_stream_handle_t *strmh, uint8_t *payload, size_t payload_len) {
-  size_t header_len;
-  uint8_t header_info;
-  size_t data_len;
+  size_t header_len = 0;
+  uint8_t header_info = 0;
+  size_t data_len = 0;
 
   /* magic numbers for identifying header packets from some iSight cameras */
   static uint8_t isight_tag[] = {
@@ -729,75 +730,199 @@ void _uvc_process_payload(uvc_stream_handle_t *strmh, uint8_t *payload, size_t p
     0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xfa, 0xce
   };
 
-  /* magic for Infiray T2S+ vendor header */
-  static uint8_t infiray_tag[] = {
-    0x0C, 0x8D, 0xEF, 0x21, 0xB1, 0xF0, 0xEF, 0x21,
-    0xB1, 0xF0
-  };
+  /* magic for Infiray T2S+ vendor header (10 байт подряд в начале ISO) */
+ /* static uint8_t infiray_tag[] = {
+    0x0C, 0x8D, 0xEF, 0x21, 0xB1, 0xF0, 0xEF, 0x21, 0xB1, 0xF0
+  };*/
 
+  static uint8_t infiray_tag[] = {
+    0x0C, 0x8C, 0xEF, 0x21, 0xB1, 0xF0, 0xEF, 0x21, 0xB1, 0xF0
+  };
 
   /* ignore empty payload transfers */
   if (payload_len == 0)
     return;
 
-	// ====== RAW ISO PACKET DUMP ======
-	if(1){
-		static int iso_id = 0;
-		if (iso_id < 20000 && g_dump_dir_c && g_dump_dir_c[0] != '\0') {
+  // ====== RAW ISO PACKET DUMP (диагностика, при необходимости включить) ======
+  if (1) {
+    static int iso_id = 0;
 
-			char filename[256];
-			snprintf(filename, sizeof(filename),
-					 "%s/stream_%04d.bin", g_dump_dir_c, iso_id);
+    char hex[200];
+    int pos = 0;
+    for (int i = 0; i < 64 && i < (int)payload_len; i++)
+      pos += snprintf(hex + pos, sizeof(hex) - pos, "%02X ", payload[i]);
+    LOGE("Infiray: ISO[%d]: %s", iso_id, hex);
 
-			FILE *f = fopen(filename, "wb");
-			if (f) {
-				fwrite(payload, 1, payload_len, f);
-				fclose(f);
-				LOGV("Dumped ISO packet in stream.c to %s (payload_len=%zu)", filename, payload_len);
-			} else {
-				LOGE("Failed to open %s for write", filename);
-			}
+    if (iso_id < 20000 && g_dump_dir_c && g_dump_dir_c[0] != '\0') {
+      uint16_t pkt_counter = 0xFFFF;
+      if (payload_len >= 12 && memcmp(payload, infiray_tag, sizeof(infiray_tag)) == 0) {
+        pkt_counter = (uint16_t)(payload[10] | (payload[11] << 8));
+      }
 
-			iso_id++;
-		}
-	}
+      char filename[256];
+      snprintf(filename, sizeof(filename),
+               "%s/stream_%04d_p%05u.bin",
+               g_dump_dir_c,
+               iso_id,
+               pkt_counter);
 
+      FILE *f = fopen(filename, "wb");
+      if (f) {
+        fwrite(payload, 1, payload_len, f);
+        fclose(f);
+        LOGV("Infiray: Dumped ISO packet to %s (payload_len=%zu)", filename, payload_len);
+      } else {
+        LOGE("Infiray: Failed to open %s for write", filename);
+      }
 
+      iso_id++;
+    }
+  }
 
-
-  /* Certain iSight cameras have strange behavior: They send header
-   * information in a packet with no image data, and then the following
-   * packets have only image data, with no more headers until the next frame.
-   *
-   * The iSight header: len(1), flags(1 or 2), 0x11223344(4),
-   * 0xdeadbeefdeadface(8), ??(16)
-   */
-
-
+  /* ====== INFIRAY T2S+ SPECIAL MODE ====== */
   if (strmh->devh->is_infiray) {
-    // наш особый режим: первые 16 байт — vendor header, дальше — чистые данные
-    if (payload_len < 16)
+    /*
+     * Упрощённая модель:
+     *  - магия ДОЛЖНА быть в начале ISO‑пакета (offset 0)
+     *  - сразу за магией идут 2 байта счётчика пакета (LE)
+     *  - дальше либо:
+     *      а) все нули → это "нулевой" пакет, граница кадра
+     *      б) данные RAW16 → часть кадра
+     */
+
+    if (payload_len < 12)
       return;
 
-    // проверим сигнатуру, чтобы не ловить мусор
-    if (memcmp(payload, infiray_tag, sizeof(infiray_tag)) != 0) {
-      // либо игнорируем, либо логируем
-      // LOGE("Infiray: unexpected header");
+    if (memcmp(payload, infiray_tag, sizeof(infiray_tag)) != 0)
+      return; // не наш пакет
+
+    uint16_t pkt_counter = (uint16_t)(payload[10] | (payload[11] << 8));
+    size_t data_start = 12;
+
+    /* 1) Проверяем, нулевой ли это пакет (все байты после магии == 0) */
+    int all_zero = 1;
+    if (data_start >= payload_len) {
+      // данных нет вообще — считаем, что это не нулевой пакет, просто пустой шум
+      all_zero = 0;
+    } else {
+      for (size_t i = data_start; i < payload_len; i++) {
+        if (payload[i] != 0) {
+          all_zero = 0;
+          break;
+        }
+      }
+    }
+
+    if (all_zero) {
+      /*
+       * Нулевой пакет = граница кадра.
+       * Если кадр уже собирался — считаем его завершённым.
+       */
+      if (strmh->got_bytes > 0) {
+        LOGV("Infiray: zero packet, boundary, pkt=%u, frame_bytes=%u",
+             pkt_counter, (unsigned)strmh->got_bytes);
+
+        /* ===== ВЫДЕЛЕНИЕ ХВОСТА (4 нижние строки RAW16) =====
+         * Полный кадр: 256 x 196 x 2 = 100 352 байт
+         * Матрица:     256 x 192 x 2 = 98 304 байт
+         * Хвост:       256 x   4 x 2 =  2 048 байт
+         * Хвост лежит сразу после матрицы.
+         */
+        const size_t matrix_bytes = 256 * 192 * 2;   // 98 304
+        const size_t tail_bytes   = 256 * 4   * 2;   // 2 048
+
+        if (strmh->got_bytes >= matrix_bytes + tail_bytes) {
+          uint8_t *tail_ptr = strmh->outbuf + matrix_bytes;
+
+          if (g_dump_dir_c && g_dump_dir_c[0] != '\0') {
+            static int tail_id = 0;
+            char fname[256];
+
+            snprintf(fname, sizeof(fname),
+                     "%s/tail_%06d_p%05u.bin",
+                     g_dump_dir_c,
+                     tail_id++,
+                     pkt_counter);
+
+            FILE *tf = fopen(fname, "wb");
+            if (tf) {
+              fwrite(tail_ptr, 1, tail_bytes, tf);
+              fclose(tf);
+              LOGV("Infiray: tail dumped to %s", fname);
+            }
+          }
+        }
+		
+		//обрезаем кадр перед отправкой
+		strmh->got_bytes = matrix_bytes;
+		
+        _uvc_swap_buffers(strmh);
+        strmh->got_bytes = 0;
+      } else {
+        LOGV("Infiray: zero packet, boundary with empty frame, pkt=%u", pkt_counter);
+      }
+
+      // ждём следующий пакет, который начнёт новый кадр
       return;
     }
-	
-    LOGV("Infiray: custom payload handler active, payload_len=%zu", payload_len);
 
-    header_len = 16;
-    data_len   = payload_len - header_len;
-    header_info = 0; // UVC header не используем
+    /* 2) Обычный пакет с данными кадра: всё после data_start — RAW16 */
+    data_len = payload_len - data_start;
 
-  } else if (strmh->devh->is_isight &&
+    if (strmh->got_bytes + data_len > strmh->cur_ctrl.dwMaxVideoFrameSize)
+      data_len = strmh->cur_ctrl.dwMaxVideoFrameSize - strmh->got_bytes;
+
+    memcpy(strmh->outbuf + strmh->got_bytes, payload + data_start, data_len);
+    strmh->got_bytes += data_len;
+
+    LOGV("Infiray: data packet, pkt=%u, appended=%zu, total=%u",
+         pkt_counter, data_len, (unsigned)strmh->got_bytes);
+
+    /* 3) Дополнительная страховка: если вдруг набрали полный буфер по размеру */
+    if (strmh->got_bytes == strmh->cur_ctrl.dwMaxVideoFrameSize) {
+      LOGV("Infiray: frame complete by size, total=%u", (unsigned)strmh->got_bytes);
+
+      const size_t matrix_bytes = 256 * 192 * 2;
+      const size_t tail_bytes   = 256 * 4   * 2;
+
+      if (strmh->got_bytes >= matrix_bytes + tail_bytes) {
+        uint8_t *tail_ptr = strmh->outbuf + matrix_bytes;
+
+        if (g_dump_dir_c && g_dump_dir_c[0] != '\0') {
+          static int tail_id = 0;
+          char fname[256];
+
+          snprintf(fname, sizeof(fname),
+                   "%s/tail_%06d_p%05u.bin",
+                   g_dump_dir_c,
+                   tail_id++,
+                   pkt_counter);
+
+          FILE *tf = fopen(fname, "wb");
+          if (tf) {
+            fwrite(tail_ptr, 1, tail_bytes, tf);
+            fclose(tf);
+            LOGV("Infiray: tail dumped to %s (by size)", fname);
+          }
+        }
+      }
+
+      _uvc_swap_buffers(strmh);
+      strmh->got_bytes = 0;
+    }
+
+    return; // Infiray полностью обработан
+  }
+
+  /* ======== ДАЛЬШЕ — СТАНДАРТНЫЙ UVC‑ПУТЬ (iSight и обычные камеры) ======== */
+
+  if (strmh->devh->is_isight &&
       (payload_len < 14 || memcmp(isight_tag, payload + 2, sizeof(isight_tag))) &&
       (payload_len < 15 || memcmp(isight_tag, payload + 3, sizeof(isight_tag)))) {
     /* The payload transfer doesn't have any iSight magic, so it's all image data */
     header_len = 0;
     data_len = payload_len;
+
   } else {
     header_len = payload[0];
 
@@ -812,13 +937,9 @@ void _uvc_process_payload(uvc_stream_handle_t *strmh, uint8_t *payload, size_t p
       data_len = payload_len - header_len;
   }
 
-  if (strmh->devh->is_infiray) {
-  // для Infiray вообще не трогаем UVC-заголовок
-  header_info = 0; 
-  } else  if (header_len < 2) {
+  if (header_len < 2) {
     header_info = 0;
   } else {
-    /** @todo we should be checking the end-of-header bit */
     size_t variable_offset = 2;
 
     header_info = payload[1];
@@ -829,9 +950,6 @@ void _uvc_process_payload(uvc_stream_handle_t *strmh, uint8_t *payload, size_t p
     }
 
     if (strmh->fid != (header_info & 1) && strmh->got_bytes != 0) {
-      /* The frame ID bit was flipped, but we have image data sitting
-         around from prior transfers. This means the camera didn't send
-         an EOF for the last transfer of the previous frame. */
       _uvc_swap_buffers(strmh);
     }
 
@@ -843,29 +961,25 @@ void _uvc_process_payload(uvc_stream_handle_t *strmh, uint8_t *payload, size_t p
     }
 
     if (header_info & (1 << 3)) {
-      /** @todo read the SOF token counter */
       strmh->last_scr = DW_TO_INT(payload + variable_offset);
       variable_offset += 6;
     }
 
     if (header_len > variable_offset) {
-        // Metadata is attached to header
-        size_t meta_len = header_len - variable_offset;
-        if (strmh->meta_got_bytes + meta_len > LIBUVC_XFER_META_BUF_SIZE)
-          meta_len = LIBUVC_XFER_META_BUF_SIZE - strmh->meta_got_bytes; /* Avoid overflow. */
-        memcpy(strmh->meta_outbuf + strmh->meta_got_bytes, payload + variable_offset, meta_len);
-        strmh->meta_got_bytes += meta_len;
+      size_t meta_len = header_len - variable_offset;
+      if (strmh->meta_got_bytes + meta_len > LIBUVC_XFER_META_BUF_SIZE)
+        meta_len = LIBUVC_XFER_META_BUF_SIZE - strmh->meta_got_bytes;
+      memcpy(strmh->meta_outbuf + strmh->meta_got_bytes, payload + variable_offset, meta_len);
+      strmh->meta_got_bytes += meta_len;
     }
   }
 
-/*это ниже - нужно сотавить?*/
   if (data_len > 0) {
     if (strmh->got_bytes + data_len > strmh->cur_ctrl.dwMaxVideoFrameSize)
-      data_len = strmh->cur_ctrl.dwMaxVideoFrameSize - strmh->got_bytes; /* Avoid overflow. */
+      data_len = strmh->cur_ctrl.dwMaxVideoFrameSize - strmh->got_bytes;
     memcpy(strmh->outbuf + strmh->got_bytes, payload + header_len, data_len);
     strmh->got_bytes += data_len;
     if (header_info & (1 << 1) || strmh->got_bytes == strmh->cur_ctrl.dwMaxVideoFrameSize) {
-      /* The EOF bit is set, so publish the complete frame */
       _uvc_swap_buffers(strmh);
     }
   }
